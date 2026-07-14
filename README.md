@@ -30,6 +30,18 @@ lf
 lf self-update
 ```
 
+如果服务器上的旧 `lf` 还没有自动更新功能，用 raw 命令强制刷新一次：
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) self-update
+```
+
+查看当前脚本版本：
+
+```bash
+lf version
+```
+
 临时关闭启动自动更新：
 
 ```bash
@@ -131,6 +143,7 @@ lf url
 lf logs
 lf uninstall
 lf purge
+lf version
 ```
 
 如果还没安装快捷命令，也可以用完整形式：

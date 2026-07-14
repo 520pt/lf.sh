@@ -20,6 +20,7 @@ SCHEMA_URL="${CHECK_CX_SCHEMA_URL:-https://raw.githubusercontent.com/BingZi-233/
 NGINX_FILE="$INSTALL_DIR/nginx.conf"
 INIT_SQL_FILE="$INSTALL_DIR/init-check-cx.sql"
 SCRIPT_URL="${LF_SCRIPT_URL:-https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh}"
+SCRIPT_VERSION="2026.07.14.3"
 COMPOSE_CMD=()
 
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
@@ -1348,6 +1349,7 @@ show_help() {
   lf app check-cx uninstall           # 卸载容器，保留数据
   lf app check-cx purge               # 彻底删除容器、配置和数据库
   lf self-update                      # 手动更新 lf 脚本
+  lf version                          # 查看脚本版本和快捷命令状态
 
 兼容旧命令：
   lf install | lf update | lf logs | lf uninstall | lf purge
@@ -1357,8 +1359,19 @@ show_help() {
 EOF
 }
 
+show_version() {
+  echo "lf.sh version: $SCRIPT_VERSION"
+  echo "script url: $SCRIPT_URL"
+  if [ -f /usr/local/bin/lf ]; then
+    echo "shortcut: /usr/local/bin/lf"
+  else
+    echo "shortcut: 未安装"
+  fi
+}
+
 main() {
   auto_update_self "$@"
+  install_self_shortcut
 
   if [ $# -eq 0 ]; then
     main_menu_loop
@@ -1421,6 +1434,9 @@ main() {
       ;;
     00|self-update|script-update|脚本更新)
       update_self
+      ;;
+    version|-v|--version|版本)
+      show_version
       ;;
     help|-h|--help)
       show_help
