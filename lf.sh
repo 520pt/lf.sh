@@ -206,6 +206,66 @@ prompt_value() {
   printf '%s' "$value"
 }
 
+show_supabase_guide() {
+  cat <<'EOF'
+
+============================================================
+首次部署前，请先准备 Supabase 数据库
+============================================================
+
+check-cx 需要 Supabase 保存监控配置和历史数据。
+如果你还没有 Supabase 项目，请先按下面步骤操作：
+
+1. 打开 Supabase 控制台
+   https://supabase.com/dashboard
+
+2. 新建一个 Project
+   记住数据库密码，地区按需选择即可。
+
+3. 进入项目后，打开：
+   Project Settings -> API
+
+4. 准备下面 3 个值，稍后脚本会让你输入：
+   - Project URL
+     填到 SUPABASE_URL
+   - anon public / publishable key
+     填到 SUPABASE_PUBLISHABLE_OR_ANON_KEY
+   - service_role key
+     填到 SUPABASE_SERVICE_ROLE_KEY
+
+5. 初始化数据库表结构
+   打开 Supabase 左侧 SQL Editor，新建 Query，复制并运行：
+   https://raw.githubusercontent.com/BingZi-233/check-cx/master/supabase/schema.sql
+
+完成以上步骤后，再回到这里继续安装。
+
+提示：
+- SUPABASE_SERVICE_ROLE_KEY 是敏感密钥，只输入到服务器，不要发给别人。
+- 如果还没准备好，输入 n 退出；准备好后重新运行本脚本即可。
+
+============================================================
+EOF
+}
+
+confirm_supabase_ready() {
+  if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_PUBLISHABLE_OR_ANON_KEY:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+    return 0
+  fi
+
+  show_supabase_guide
+
+  local answer
+  read -r -p "你是否已经创建 Supabase 项目并执行 schema.sql？[y/N]: " answer
+  case "$answer" in
+    y|Y|yes|YES)
+      return 0
+      ;;
+    *)
+      info "已退出。准备好 Supabase 后重新运行：bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)"
+      exit 0
+      ;;
+  esac
+}
 write_env_file() {
   mkdir -p "$INSTALL_DIR"
 
@@ -214,7 +274,9 @@ write_env_file() {
     return 0
   fi
 
-  info "首次部署需要填写 Supabase 配置。输入内容只会写入 $ENV_FILE，不会打印到屏幕。"
+  confirm_supabase_ready
+
+  info "请输入 Supabase 配置。输入内容只会写入 $ENV_FILE，不会打印到屏幕。"
   local supabase_url anon_key service_key node_id interval retention official_interval concurrency
   supabase_url="$(prompt_value SUPABASE_URL 'SUPABASE_URL')"
   anon_key="$(prompt_value SUPABASE_PUBLISHABLE_OR_ANON_KEY 'SUPABASE_PUBLISHABLE_OR_ANON_KEY')"
