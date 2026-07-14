@@ -213,7 +213,7 @@ lf app check-cx install
 ERROR: must be owner of type factor_type
 ```
 
-同样执行上面的更新/重建命令。新版会把 `auth` schema 下的表、序列、函数、独立 enum/domain/range type owner 都修复为 `supabase_auth_admin`，并避开表的隐式 row type。
+同样执行上面的更新/重建命令。新版会把 `auth` schema 下的表、序列、函数、独立 enum/domain/range type owner 都修复为 `supabase_auth_admin`，并避开表的隐式 row type。若检测到旧失败迁移留下的半成品 `auth.oauth_clients` 表缺少 `client_id` 字段，会自动删除该半成品表，让 GoTrue 重新创建。
 
 ## 部署目录
 

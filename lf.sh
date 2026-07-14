@@ -20,7 +20,7 @@ SCHEMA_URL="${CHECK_CX_SCHEMA_URL:-https://raw.githubusercontent.com/BingZi-233/
 NGINX_FILE="$INSTALL_DIR/nginx.conf"
 INIT_SQL_FILE="$INSTALL_DIR/init-check-cx.sql"
 SCRIPT_URL="${LF_SCRIPT_URL:-https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh}"
-SCRIPT_VERSION="2026.07.14.6"
+SCRIPT_VERSION="2026.07.14.7"
 COMPOSE_CMD=()
 
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
@@ -726,6 +726,22 @@ GRANT ALL PRIVILEGES ON SCHEMA auth TO supabase_auth_admin;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA auth TO supabase_auth_admin;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA auth TO supabase_auth_admin;
 GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA auth TO supabase_auth_admin;
+
+DO \$\$
+BEGIN
+  IF to_regclass('auth.oauth_clients') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'auth'
+         AND table_name = 'oauth_clients'
+         AND column_name = 'client_id'
+     ) THEN
+    DROP TABLE auth.oauth_clients CASCADE;
+  END IF;
+END
+\$\$;
+
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON TABLES TO supabase_auth_admin;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON SEQUENCES TO supabase_auth_admin;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON FUNCTIONS TO supabase_auth_admin;
