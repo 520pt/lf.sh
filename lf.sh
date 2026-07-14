@@ -52,6 +52,58 @@ ensure_curl() {
   fi
 }
 
+
+get_local_ipv4() {
+  ip route get 8.8.8.8 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' || \
+    hostname -I 2>/dev/null | awk '{print $1}' || \
+    ifconfig 2>/dev/null | grep -E 'inet [0-9]' | grep -v '127.0.0.1' | awk '{print $2}' | head -n 1 || true
+}
+
+get_public_ipv4() {
+  curl -4 -fsS --max-time 3 https://ipinfo.io/ip 2>/dev/null || \
+    curl -4 -fsS --max-time 3 https://api.ipify.org 2>/dev/null || \
+    curl -4 -fsS --max-time 3 https://ifconfig.me/ip 2>/dev/null || true
+}
+
+get_public_ipv6() {
+  curl -6 -fsS --max-time 3 https://v6.ipinfo.io/ip 2>/dev/null || \
+    curl -6 -fsS --max-time 3 https://api64.ipify.org 2>/dev/null || true
+}
+
+print_access_urls() {
+  local port="${1:-$DEFAULT_PORT}"
+  local ipv4_address ipv6_address local_ipv4 printed
+  ipv4_address="$(get_public_ipv4 | tr -d '\r\n ')"
+  ipv6_address="$(get_public_ipv6 | tr -d '\r\n ')"
+  local_ipv4="$(get_local_ipv4 | tr -d '\r\n ')"
+  printed="false"
+
+  echo "------------------------"
+  echo "访问地址:"
+
+  if [ -n "$ipv4_address" ]; then
+    echo "http://$ipv4_address:$port"
+    printed="true"
+  fi
+
+  if [ -n "$ipv6_address" ]; then
+    echo "http://[$ipv6_address]:$port"
+    printed="true"
+  fi
+
+  if [ "$printed" = "false" ] && [ -n "$local_ipv4" ]; then
+    echo "http://$local_ipv4:$port"
+    printed="true"
+  fi
+
+  if [ "$printed" = "false" ]; then
+    echo "http://<服务器IP>:$port"
+    warn "未能自动检测服务器公网 IP，请将 <服务器IP> 替换为你的服务器公网 IP。"
+  fi
+
+  echo "------------------------"
+}
+
 detect_country() {
   curl -fsS --max-time 2 https://ipinfo.io/country 2>/dev/null | tr -d '\r\n' || true
 }
@@ -469,11 +521,12 @@ deploy() {
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${DEFAULT_PORT}" || true)"
   if [ "$code" = "200" ]; then
-    success "访问地址：http://服务器IP:${DEFAULT_PORT}"
+    success "服务已通过本地 HTTP 检测"
   else
     warn "本地 HTTP 检测返回 $code。服务可能仍在启动中，请稍后查看日志。"
-    warn "仍可尝试访问：http://服务器IP:${DEFAULT_PORT}"
   fi
+
+  print_access_urls "$DEFAULT_PORT"
 
   info "常用命令："
   printf '  查看日志：docker logs -f %s\n' "$APP_NAME"
