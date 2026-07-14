@@ -207,6 +207,14 @@ lf app check-cx install
 
 这会保留 `/opt/check-cx/postgres-data`，只修复 Auth 数据库角色、`auth` schema 权限，并重建相关容器。
 
+如果 Auth 日志里出现：
+
+```text
+ERROR: must be owner of type factor_type
+```
+
+同样执行上面的更新/重建命令。新版会把 `auth` schema 下的表、序列、函数、type/enum owner 都修复为 `supabase_auth_admin`。
+
 ## 部署目录
 
 默认部署在：
