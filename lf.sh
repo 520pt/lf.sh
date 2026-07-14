@@ -20,7 +20,7 @@ SCHEMA_URL="${CHECK_CX_SCHEMA_URL:-https://raw.githubusercontent.com/BingZi-233/
 NGINX_FILE="$INSTALL_DIR/nginx.conf"
 INIT_SQL_FILE="$INSTALL_DIR/init-check-cx.sql"
 SCRIPT_URL="${LF_SCRIPT_URL:-https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh}"
-SCRIPT_VERSION="2026.07.14.5"
+SCRIPT_VERSION="2026.07.14.6"
 COMPOSE_CMD=()
 
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
@@ -748,7 +748,7 @@ BEGIN
     FROM pg_type t
     JOIN pg_namespace n ON n.oid = t.typnamespace
     WHERE n.nspname = 'auth'
-      AND t.typtype IN ('b', 'c', 'd', 'e', 'r')
+      AND t.typtype IN ('d', 'e', 'r', 'm')
       AND t.typname NOT LIKE '\_%'
   LOOP
     EXECUTE 'ALTER TYPE ' || item.name || ' OWNER TO supabase_auth_admin';

@@ -213,7 +213,7 @@ lf app check-cx install
 ERROR: must be owner of type factor_type
 ```
 
-同样执行上面的更新/重建命令。新版会把 `auth` schema 下的表、序列、函数、type/enum owner 都修复为 `supabase_auth_admin`。
+同样执行上面的更新/重建命令。新版会把 `auth` schema 下的表、序列、函数、独立 enum/domain/range type owner 都修复为 `supabase_auth_admin`，并避开表的隐式 row type。
 
 ## 部署目录
 
