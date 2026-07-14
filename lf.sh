@@ -20,7 +20,7 @@ SCHEMA_URL="${CHECK_CX_SCHEMA_URL:-https://raw.githubusercontent.com/BingZi-233/
 NGINX_FILE="$INSTALL_DIR/nginx.conf"
 INIT_SQL_FILE="$INSTALL_DIR/init-check-cx.sql"
 SCRIPT_URL="${LF_SCRIPT_URL:-https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh}"
-SCRIPT_VERSION="2026.07.14.9"
+SCRIPT_VERSION="2026.07.14.10"
 COMPOSE_CMD=()
 
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
@@ -729,15 +729,53 @@ GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA auth TO supabase_auth_admin;
 
 DO \$\$
 BEGIN
+  IF to_regclass('auth.oauth_clients') IS NULL
+     AND to_regclass('auth.schema_migrations') IS NOT NULL
+     AND EXISTS (
+       SELECT 1
+       FROM auth.schema_migrations
+       WHERE version = '20250731150234'
+     ) THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'auth' AND t.typname = 'oauth_registration_type') THEN
+      CREATE TYPE auth.oauth_registration_type AS ENUM ('dynamic', 'manual');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'auth' AND t.typname = 'oauth_client_type') THEN
+      CREATE TYPE auth.oauth_client_type AS ENUM ('public', 'confidential');
+    END IF;
+
+    CREATE TABLE auth.oauth_clients (
+      id uuid NOT NULL,
+      client_secret_hash text NULL,
+      registration_type auth.oauth_registration_type NOT NULL,
+      redirect_uris text NOT NULL,
+      grant_types text NOT NULL,
+      client_name text NULL,
+      client_uri text NULL,
+      logo_uri text NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      deleted_at timestamptz NULL,
+      client_type auth.oauth_client_type NOT NULL DEFAULT 'confidential',
+      CONSTRAINT oauth_clients_pkey PRIMARY KEY (id),
+      CONSTRAINT oauth_clients_client_name_length CHECK (char_length(client_name) <= 1024),
+      CONSTRAINT oauth_clients_client_uri_length CHECK (char_length(client_uri) <= 2048),
+      CONSTRAINT oauth_clients_logo_uri_length CHECK (char_length(logo_uri) <= 2048)
+    );
+    CREATE INDEX IF NOT EXISTS oauth_clients_deleted_at_idx ON auth.oauth_clients (deleted_at);
+  END IF;
+
   IF to_regclass('auth.oauth_clients') IS NOT NULL
      AND NOT EXISTS (
        SELECT 1
        FROM information_schema.columns
        WHERE table_schema = 'auth'
          AND table_name = 'oauth_clients'
-         AND column_name = 'client_id'
+         AND column_name = 'client_type'
      ) THEN
-    DROP TABLE auth.oauth_clients CASCADE;
+    IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'auth' AND t.typname = 'oauth_client_type') THEN
+      CREATE TYPE auth.oauth_client_type AS ENUM ('public', 'confidential');
+    END IF;
+    ALTER TABLE auth.oauth_clients ADD COLUMN client_type auth.oauth_client_type NOT NULL DEFAULT 'confidential';
   END IF;
 
   IF EXISTS (
