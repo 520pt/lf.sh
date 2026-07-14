@@ -119,14 +119,16 @@ lf purge
 bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) app check-cx install
 ```
 
-## Check CX 本地数据库模式
+## Check CX 本地数据库 + 后台模式
 
 `lf app check-cx install` 会在同一台服务器的 Docker Compose 里自动部署：
 
-- `check-cx` 前台监控面板
+- `check-cx` 前台监控面板，默认端口 `3000`
+- `check-cx-admin` 官方后台管理面板，默认端口 `3001`
 - PostgreSQL 本地数据库
 - PostgREST，Supabase REST API 兼容层
-- Nginx REST 网关，把 `/rest/v1/*` 转发给 PostgREST
+- Supabase Auth / GoTrue，用于后台 GitHub OAuth 登录
+- Nginx API 网关，默认端口 `8000`，把 `/rest/v1/*` 转发给 PostgREST，把 `/auth/v1/*` 转发给 GoTrue
 
 不需要手动创建 Supabase 项目，也不需要手动输入：
 
@@ -135,6 +137,24 @@ bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) app ch
 - `SUPABASE_SERVICE_ROLE_KEY`
 
 这些都会由脚本自动生成并写入服务器本地配置。
+
+后台登录需要 GitHub OAuth。部署后执行：
+
+```bash
+lf app check-cx admin
+```
+
+脚本会显示 GitHub OAuth App 的新建步骤，并要求填写：
+
+- GitHub Client ID
+- GitHub Client Secret，输入时不回显
+- `ADMIN_EMAILS`，允许进入后台的 GitHub 邮箱，多个用英文逗号分隔
+
+GitHub OAuth App 里最关键的是 `Authorization callback URL`，请使用脚本输出的：
+
+```text
+http://服务器IP:8000/auth/v1/callback
+```
 
 ## 部署目录
 
@@ -149,7 +169,7 @@ bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) app ch
 ```text
 /opt/check-cx/.env                 # 本地数据库和 check-cx 环境变量，包含密钥
 /opt/check-cx/docker-compose.yml   # Docker Compose 配置
-/opt/check-cx/nginx.conf           # 本地 REST 网关配置
+/opt/check-cx/nginx.conf           # 本地 REST/Auth 网关配置
 /opt/check-cx/postgres-data/       # PostgreSQL 数据目录
 ```
 
@@ -172,10 +192,22 @@ lf ldnmp
 
 ## 可选环境变量
 
-修改 Web 端口：
+修改前台 Web 端口：
 
 ```bash
 CHECK_CX_PORT=8080 lf app check-cx install
+```
+
+修改后台 Web 端口：
+
+```bash
+CHECK_CX_ADMIN_PORT=8081 lf app check-cx install
+```
+
+修改 Supabase 兼容 API 端口：
+
+```bash
+CHECK_CX_API_PORT=8082 lf app check-cx install
 ```
 
 修改安装目录：

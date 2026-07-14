@@ -3,10 +3,16 @@ set -Eeuo pipefail
 
 APP_NAME="check-cx"
 IMAGE="bingzi233/check-cx:latest"
+ADMIN_APP_NAME="check-cx-admin"
+ADMIN_IMAGE="bingzi233/check-cx-admin:latest"
+AUTH_CONTAINER="check-cx-auth"
+AUTH_IMAGE="supabase/gotrue:v2.189.0"
 INSTALL_DIR="${CHECK_CX_INSTALL_DIR:-/opt/check-cx}"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 ENV_FILE="$INSTALL_DIR/.env"
 DEFAULT_PORT="${CHECK_CX_PORT:-3000}"
+ADMIN_PORT="${CHECK_CX_ADMIN_PORT:-3001}"
+API_PORT="${CHECK_CX_API_PORT:-8000}"
 DB_CONTAINER="check-cx-db"
 POSTGREST_CONTAINER="check-cx-postgrest"
 GATEWAY_CONTAINER="check-cx-gateway"
@@ -71,6 +77,34 @@ get_public_ipv6() {
     curl -6 -fsS --max-time 3 https://api64.ipify.org 2>/dev/null || true
 }
 
+detect_primary_host() {
+  local ipv4_address local_ipv4
+  ipv4_address="$(get_public_ipv4 | tr -d '\r\n ')"
+  local_ipv4="$(get_local_ipv4 | tr -d '\r\n ')"
+
+  if [ -n "$ipv4_address" ]; then
+    printf '%s' "$ipv4_address"
+  elif [ -n "$local_ipv4" ]; then
+    printf '%s' "$local_ipv4"
+  else
+    printf '%s' "<服务器IP>"
+  fi
+}
+access_url_for_port() {
+  local port="${1:-$DEFAULT_PORT}"
+  local host
+  host="$(detect_primary_host)"
+  printf 'http://%s:%s' "$host" "$port"
+}
+
+api_public_url() {
+  access_url_for_port "$API_PORT"
+}
+
+api_external_url() {
+  printf '%s/auth/v1' "$(api_public_url)"
+}
+
 print_access_urls() {
   local port="${1:-$DEFAULT_PORT}"
   local ipv4_address ipv6_address local_ipv4 printed
@@ -104,26 +138,44 @@ print_access_urls() {
 
   echo "------------------------"
 }
-
+print_single_access_url() {
+  local label="$1"
+  local port="$2"
+  echo "  $label: $(access_url_for_port "$port")"
+}
 
 print_deployment_summary() {
+  load_env_file
+  local auth_callback admin_redirect github_status
+  auth_callback="${GITHUB_CALLBACK_URL:-${API_EXTERNAL_URL:-$(api_external_url)}/callback}"
+  admin_redirect="${APP_URL:-$(access_url_for_port "$ADMIN_PORT")}/auth/callback"
+  github_status="未配置"
+  if [ "${GITHUB_ENABLED:-false}" = "true" ] && [ -n "${GITHUB_CLIENT_ID:-}" ] && [ -n "${GITHUB_CLIENT_SECRET:-}" ]; then
+    github_status="已配置"
+  fi
+
   echo ""
   echo "============================================================"
   echo "Check CX 部署信息"
   echo "============================================================"
-  echo "前台监控面板:"
-  print_access_urls "$DEFAULT_PORT"
+  print_single_access_url "前台监控面板" "$DEFAULT_PORT"
+  print_single_access_url "后台管理面板" "$ADMIN_PORT"
+  print_single_access_url "Supabase 兼容 API" "$API_PORT"
   echo ""
-  echo "后台管理:"
-  echo "  当前脚本部署的是 check-cx 前台监控面板 + 本地数据库兼容层。"
-  echo "  官方后台是独立项目 check-cx-admin，且依赖 Supabase Auth。"
-  echo "  本地轻量模式暂未内置后台管理入口。"
+  echo "后台登录方式:"
+  echo "  官方后台 check-cx-admin 使用 GitHub OAuth 登录。"
+  echo "  GitHub OAuth 状态: $github_status"
+  echo "  GitHub OAuth App 回调地址填这个: $auth_callback"
+  echo "  后台允许跳转地址: $admin_redirect"
+  echo "  如果还没配置，执行: lf app check-cx admin"
   echo ""
   echo "容器:"
   printf '  %-24s %s\n' "$APP_NAME" "前台监控面板"
+  printf '  %-24s %s\n' "$ADMIN_APP_NAME" "后台管理面板"
+  printf '  %-24s %s\n' "$AUTH_CONTAINER" "Supabase Auth / GitHub OAuth"
   printf '  %-24s %s\n' "$DB_CONTAINER" "PostgreSQL 本地数据库"
   printf '  %-24s %s\n' "$POSTGREST_CONTAINER" "Supabase REST 兼容 API"
-  printf '  %-24s %s\n' "$GATEWAY_CONTAINER" "REST 网关"
+  printf '  %-24s %s\n' "$GATEWAY_CONTAINER" "REST/Auth 网关"
   echo ""
   echo "目录与配置:"
   echo "  安装目录: $INSTALL_DIR"
@@ -131,23 +183,23 @@ print_deployment_summary() {
   echo "  Compose:  $COMPOSE_FILE"
   echo "  网关配置: $NGINX_FILE"
   echo "  数据目录: $INSTALL_DIR/postgres-data"
-  echo "  注意: .env 和 postgres-data 包含敏感配置/业务数据，请勿公开。"
+  echo "  注意: .env 和 postgres-data 包含密钥/业务数据，请勿公开。"
   echo ""
   echo "常用命令:"
-  echo "  查看全部日志: bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) logs"
-  echo "  查看前台日志: docker logs -f $APP_NAME"
-  echo "  查看数据库日志: docker logs -f $DB_CONTAINER"
-  echo "  更新/重部署: bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) update"
-  echo "  停止并删除容器但保留数据: bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) uninstall"
-  echo "  彻底卸载并删除数据: bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) purge"
+  echo "  面板管理: lf"
+  echo "  安装/更新: lf app check-cx install"
+  echo "  配置后台: lf app check-cx admin"
+  echo "  查看状态: lf app check-cx status"
+  echo "  查看日志: lf app check-cx logs"
+  echo "  卸载保留数据: lf app check-cx uninstall"
+  echo "  彻底删除数据: lf app check-cx purge"
   echo "============================================================"
 }
-
 compose_down_keep_data() {
   if [ -f "$COMPOSE_FILE" ]; then
     (cd "$INSTALL_DIR" && "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" down --remove-orphans)
   else
-    docker rm -f "$APP_NAME" "$DB_CONTAINER" "$POSTGREST_CONTAINER" "$GATEWAY_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -f "$APP_NAME" "$ADMIN_APP_NAME" "$AUTH_CONTAINER" "$DB_CONTAINER" "$POSTGREST_CONTAINER" "$GATEWAY_CONTAINER" >/dev/null 2>&1 || true
   fi
 }
 
@@ -319,50 +371,95 @@ load_env_file() {
   fi
 }
 
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  local escaped
+  escaped="$(printf '%s' "$value" | sed 's/[&|]/\\&/g')"
+  if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=${escaped}|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
+append_env_if_missing() {
+  local key="$1"
+  local value="$2"
+  if ! grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
+ensure_env_secrets() {
+  ensure_openssl
+  append_env_if_missing "POSTGRES_PASSWORD" "$(random_hex 24)"
+  append_env_if_missing "POSTGREST_AUTHENTICATOR_PASSWORD" "$(random_hex 24)"
+
+  load_env_file
+  if [ -z "${JWT_SECRET:-}" ]; then
+    append_env_if_missing "JWT_SECRET" "$(random_hex 32)"
+    load_env_file
+  fi
+  if [ -z "${ANON_KEY:-}" ]; then
+    append_env_if_missing "ANON_KEY" "$(jwt_for_role anon "$JWT_SECRET")"
+  fi
+  if [ -z "${SERVICE_ROLE_KEY:-}" ]; then
+    append_env_if_missing "SERVICE_ROLE_KEY" "$(jwt_for_role service_role "$JWT_SECRET")"
+  fi
+}
+
 write_env_file() {
   mkdir -p "$INSTALL_DIR"
 
-  if [ -f "$ENV_FILE" ]; then
-    success "检测到已有环境文件，保留：$ENV_FILE"
-    load_env_file
-    return 0
+  if [ ! -f "$ENV_FILE" ]; then
+    info "首次部署将使用本地数据库模式：自动创建 PostgreSQL + PostgREST + Auth + 后台，不需要去 Supabase 官网创建项目。"
+    umask 077
+    cat > "$ENV_FILE" <<'EOF'
+# check-cx local deployment
+EOF
+  else
+    success "检测到已有环境文件，保留并补齐缺失项：$ENV_FILE"
   fi
 
-  ensure_openssl
+  ensure_env_secrets
+  load_env_file
 
-  info "首次部署将使用本地数据库模式：自动创建 PostgreSQL + PostgREST，不需要去 Supabase 官网创建项目。"
-  local postgres_password authenticator_password jwt_secret anon_key service_role_key
-  postgres_password="$(random_hex 24)"
-  authenticator_password="$(random_hex 24)"
-  jwt_secret="$(random_hex 32)"
-  anon_key="$(jwt_for_role anon "$jwt_secret")"
-  service_role_key="$(jwt_for_role service_role "$jwt_secret")"
+  local public_api_url external_auth_url admin_app_url admin_callback_url github_callback_url
+  public_api_url="$(api_public_url)"
+  external_auth_url="$(api_external_url)"
+  admin_app_url="$(access_url_for_port "$ADMIN_PORT")"
+  admin_callback_url="$admin_app_url/auth/callback"
+  github_callback_url="$external_auth_url/callback"
 
-  umask 077
-  cat > "$ENV_FILE" <<EOF
-# check-cx local deployment
-POSTGRES_PASSWORD=$postgres_password
-POSTGREST_AUTHENTICATOR_PASSWORD=$authenticator_password
-JWT_SECRET=$jwt_secret
-ANON_KEY=$anon_key
-SERVICE_ROLE_KEY=$service_role_key
+  # 前台容器继续使用 Docker 内网网关；后台/浏览器使用服务器可访问的公网 API 地址。
+  set_env_value "SUPABASE_URL" "http://$GATEWAY_CONTAINER:8000"
+  set_env_value "SUPABASE_PUBLISHABLE_OR_ANON_KEY" "${ANON_KEY}"
+  set_env_value "SUPABASE_SERVICE_ROLE_KEY" "${SERVICE_ROLE_KEY}"
+  set_env_value "PUBLIC_SUPABASE_URL" "$public_api_url"
+  set_env_value "API_EXTERNAL_URL" "$external_auth_url"
+  set_env_value "APP_URL" "$admin_app_url"
+  set_env_value "SITE_URL" "$admin_app_url"
+  set_env_value "ADDITIONAL_REDIRECT_URLS" "$admin_callback_url"
+  set_env_value "GITHUB_CALLBACK_URL" "$github_callback_url"
 
-# Environment variables consumed by check-cx
-SUPABASE_URL=http://$GATEWAY_CONTAINER:8000
-SUPABASE_PUBLISHABLE_OR_ANON_KEY=$anon_key
-SUPABASE_SERVICE_ROLE_KEY=$service_role_key
-NODE_ENV=production
-CHECK_POLL_INTERVAL_SECONDS=60
-CHECK_NODE_ID=check-cx-1
-HISTORY_RETENTION_DAYS=30
-OFFICIAL_STATUS_CHECK_INTERVAL_SECONDS=60
-CHECK_CONCURRENCY=8
-EOF
+  append_env_if_missing "SUPABASE_DB_SCHEMA" "public"
+  append_env_if_missing "SUPABASE_OAUTH_PROVIDERS" "github"
+  append_env_if_missing "ADMIN_EMAILS" ""
+  append_env_if_missing "GITHUB_ENABLED" "false"
+  append_env_if_missing "GITHUB_CLIENT_ID" ""
+  append_env_if_missing "GITHUB_CLIENT_SECRET" ""
+
+  append_env_if_missing "NODE_ENV" "production"
+  append_env_if_missing "CHECK_POLL_INTERVAL_SECONDS" "60"
+  append_env_if_missing "CHECK_NODE_ID" "check-cx-1"
+  append_env_if_missing "HISTORY_RETENTION_DAYS" "30"
+  append_env_if_missing "OFFICIAL_STATUS_CHECK_INTERVAL_SECONDS" "60"
+  append_env_if_missing "CHECK_CONCURRENCY" "8"
 
   load_env_file
-  success "已创建本地数据库环境文件：$ENV_FILE"
+  success "已准备本地数据库、API、Auth、后台环境文件：$ENV_FILE"
 }
-
 write_compose_file() {
   mkdir -p "$INSTALL_DIR"
   cat > "$COMPOSE_FILE" <<EOF
@@ -397,12 +494,46 @@ services:
       PGRST_JWT_SECRET: \${JWT_SECRET}
       PGRST_SERVER_PORT: "3000"
 
+  check-cx-auth:
+    image: $AUTH_IMAGE
+    container_name: $AUTH_CONTAINER
+    restart: unless-stopped
+    depends_on:
+      check-cx-db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: \${API_EXTERNAL_URL}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:\${POSTGRES_PASSWORD}@$DB_CONTAINER:5432/postgres?sslmode=disable
+      GOTRUE_SITE_URL: \${SITE_URL}
+      GOTRUE_URI_ALLOW_LIST: \${ADDITIONAL_REDIRECT_URLS}
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_SECRET: \${JWT_SECRET}
+      GOTRUE_JWT_ISSUER: \${API_EXTERNAL_URL}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_GITHUB_ENABLED: \${GITHUB_ENABLED:-false}
+      GOTRUE_EXTERNAL_GITHUB_CLIENT_ID: \${GITHUB_CLIENT_ID:-}
+      GOTRUE_EXTERNAL_GITHUB_SECRET: \${GITHUB_CLIENT_SECRET:-}
+      GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: \${GITHUB_CALLBACK_URL}
+
   check-cx-gateway:
     image: nginx:alpine
     container_name: $GATEWAY_CONTAINER
     restart: unless-stopped
     depends_on:
       - check-cx-postgrest
+      - check-cx-auth
+    ports:
+      - "${API_PORT}:8000"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
@@ -421,10 +552,29 @@ services:
       SUPABASE_URL: http://$GATEWAY_CONTAINER:8000
       SUPABASE_PUBLISHABLE_OR_ANON_KEY: \${ANON_KEY}
       SUPABASE_SERVICE_ROLE_KEY: \${SERVICE_ROLE_KEY}
+
+  check-cx-admin:
+    image: $ADMIN_IMAGE
+    container_name: $ADMIN_APP_NAME
+    restart: unless-stopped
+    depends_on:
+      - check-cx-gateway
+    ports:
+      - "${ADMIN_PORT}:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      SUPABASE_URL: \${PUBLIC_SUPABASE_URL}
+      SUPABASE_PUBLISHABLE_OR_ANON_KEY: \${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: \${SERVICE_ROLE_KEY}
+      SUPABASE_DB_SCHEMA: public
+      APP_URL: \${APP_URL}
+      SUPABASE_OAUTH_PROVIDERS: github
+      ADMIN_EMAILS: \${ADMIN_EMAILS:-}
 EOF
   success "已写入 Compose 文件：$COMPOSE_FILE"
 }
-
 write_nginx_file() {
   mkdir -p "$INSTALL_DIR"
   cat > "$NGINX_FILE" <<EOF
@@ -441,18 +591,37 @@ server {
     proxy_pass http://$POSTGREST_CONTAINER:3000/;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
   }
 
   location /rest/v1/ {
     proxy_pass http://$POSTGREST_CONTAINER:3000/;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+  }
+
+  location = /auth/v1 {
+    proxy_pass http://$AUTH_CONTAINER:9999/;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+  }
+
+  location /auth/v1/ {
+    proxy_pass http://$AUTH_CONTAINER:9999/;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
   }
 }
 EOF
-  success "已写入本地 Supabase REST 网关配置：$NGINX_FILE"
+  success "已写入本地 Supabase REST/Auth 网关配置：$NGINX_FILE"
 }
-
 wait_for_postgres() {
   info "等待本地 PostgreSQL 就绪..."
   local i
@@ -474,6 +643,7 @@ build_init_sql() {
 
   cat > "$INIT_SQL_FILE" <<EOF
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION postgres;
 
 DO \$\$
 BEGIN
@@ -495,6 +665,7 @@ END
 ALTER ROLE authenticator WITH PASSWORD '$POSTGREST_AUTHENTICATOR_PASSWORD';
 ALTER ROLE service_role BYPASSRLS;
 GRANT anon, authenticated, service_role TO authenticator;
+GRANT USAGE ON SCHEMA auth TO postgres, anon, authenticated, service_role;
 EOF
 
   cat "$schema_tmp" >> "$INIT_SQL_FILE"
@@ -515,6 +686,15 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role
 EOF
 }
 
+ensure_auth_schema() {
+  info "检查 Supabase Auth 数据库 schema..."
+  docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$DB_CONTAINER"     psql -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<'SQL'
+CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA auth TO postgres, anon, authenticated, service_role;
+SQL
+  success "Auth schema 已就绪"
+}
+
 init_local_database() {
   load_env_file
   if [ -z "${POSTGRES_PASSWORD:-}" ] || [ -z "${POSTGREST_AUTHENTICATOR_PASSWORD:-}" ]; then
@@ -528,7 +708,8 @@ init_local_database() {
   local exists
   exists="$(docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$DB_CONTAINER" psql -U postgres -d postgres -tAc "SELECT to_regclass('public.check_configs') IS NOT NULL" 2>/dev/null | tr -d '[:space:]' || true)"
   if [ "$exists" = "t" ]; then
-    success "检测到数据库已初始化，跳过 schema 导入"
+    success "检测到数据库已初始化，跳过 check-cx schema 导入"
+    ensure_auth_schema
     return 0
   fi
 
@@ -536,6 +717,7 @@ init_local_database() {
   info "初始化本地数据库表结构..."
   docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$DB_CONTAINER" \
     psql -v ON_ERROR_STOP=1 -U postgres -d postgres < "$INIT_SQL_FILE" >/dev/null
+  ensure_auth_schema
   success "本地数据库初始化完成"
 }
 
@@ -553,25 +735,29 @@ deploy() {
 
   init_local_database
 
-  info "启动/更新 check-cx 与本地 Supabase 兼容服务..."
+  info "启动/更新 Check CX 前台、后台、Auth 与本地 Supabase 兼容服务..."
   (cd "$INSTALL_DIR" && "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" up -d --remove-orphans)
 
-  sleep 5
-  if docker ps --format '{{.Names}}' | grep -qx "$APP_NAME"; then
-    success "容器已运行：$APP_NAME"
-  else
-    warn "容器未处于运行状态，最近日志如下："
-    docker logs "$APP_NAME" --tail 80 2>/dev/null || true
-    fail "部署未成功启动"
-  fi
+  sleep 8
+  local container
+  for container in "$APP_NAME" "$ADMIN_APP_NAME" "$AUTH_CONTAINER" "$DB_CONTAINER" "$POSTGREST_CONTAINER" "$GATEWAY_CONTAINER"; do
+    if docker ps --format '{{.Names}}' | grep -qx "$container"; then
+      success "容器已运行：$container"
+    else
+      warn "容器未处于运行状态：$container，最近日志如下："
+      docker logs "$container" --tail 80 2>/dev/null || true
+      fail "部署未成功启动"
+    fi
+  done
 
-  local code
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${DEFAULT_PORT}" || true)"
-  if [ "$code" = "200" ]; then
-    success "服务已通过本地 HTTP 检测"
-  else
-    warn "本地 HTTP 检测返回 $code。服务可能仍在启动中，请稍后查看日志。"
-  fi
+  local front_code admin_code api_code
+  front_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${DEFAULT_PORT}" || true)"
+  admin_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${ADMIN_PORT}" || true)"
+  api_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${API_PORT}/health" || true)"
+
+  [ "$front_code" = "200" ] && success "前台已通过本地 HTTP 检测" || warn "前台本地 HTTP 检测返回 $front_code，可能仍在启动中。"
+  [ "$admin_code" = "200" ] && success "后台已通过本地 HTTP 检测" || warn "后台本地 HTTP 检测返回 $admin_code，可能仍在启动中。"
+  [ "$api_code" = "200" ] && success "API 网关已通过本地 HTTP 检测" || warn "API 网关本地 HTTP 检测返回 $api_code，可能仍在启动中。"
 
   print_deployment_summary
 }
@@ -918,41 +1104,109 @@ app_market() {
   done
 }
 
+check_cx_container_status() {
+  local label="$1"
+  local name="$2"
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then
+    docker ps -a --filter "name=^/${name}$" --format "$label: {{.Status}}"
+  else
+    echo "$label: 未安装"
+  fi
+}
+
 check_cx_status() {
   echo "Check CX 状态"
   echo "------------------------"
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$APP_NAME"; then
-    docker ps -a --filter "name=^/${APP_NAME}$" --format '前台容器: {{.Status}}'
-  else
-    echo "前台容器: 未安装"
-  fi
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$DB_CONTAINER"; then
-    docker ps -a --filter "name=^/${DB_CONTAINER}$" --format '数据库容器: {{.Status}}'
-  else
-    echo "数据库容器: 未安装"
-  fi
+  check_cx_container_status "前台容器" "$APP_NAME"
+  check_cx_container_status "后台容器" "$ADMIN_APP_NAME"
+  check_cx_container_status "Auth容器" "$AUTH_CONTAINER"
+  check_cx_container_status "数据库容器" "$DB_CONTAINER"
+  check_cx_container_status "REST容器" "$POSTGREST_CONTAINER"
+  check_cx_container_status "网关容器" "$GATEWAY_CONTAINER"
   echo "安装目录: $INSTALL_DIR"
   echo "配置文件: $ENV_FILE"
-  print_access_urls "$DEFAULT_PORT"
+  echo ""
+  print_single_access_url "前台监控面板" "$DEFAULT_PORT"
+  print_single_access_url "后台管理面板" "$ADMIN_PORT"
+  print_single_access_url "Supabase 兼容 API" "$API_PORT"
 }
 
 check_cx_urls() {
+  load_env_file
   echo "Check CX 访问地址"
-  print_access_urls "$DEFAULT_PORT"
+  echo "------------------------"
+  print_single_access_url "前台监控面板" "$DEFAULT_PORT"
+  print_single_access_url "后台管理面板" "$ADMIN_PORT"
+  print_single_access_url "Supabase 兼容 API" "$API_PORT"
+  echo ""
+  echo "后台 OAuth 相关地址:"
+  echo "  GitHub OAuth App 回调地址: ${GITHUB_CALLBACK_URL:-${API_EXTERNAL_URL:-$(api_external_url)}/callback}"
+  echo "  后台登录回跳地址: ${APP_URL:-$(access_url_for_port "$ADMIN_PORT")}/auth/callback"
 }
 
 check_cx_admin_guide() {
-  clear 2>/dev/null || true
-  echo "Check CX 后台管理说明"
-  echo "------------------------"
-  echo "官方后台项目: BingZi-233/check-cx-admin"
-  echo "官方后台依赖 Supabase Auth / GitHub OAuth。"
-  echo "当前 lf 本地轻量模式暂未内置 Auth 服务，所以还没有可直接登录的后台。"
-  echo "后续可继续加入: check-cx-admin + GoTrue(Auth) + GitHub OAuth 配置。"
-  echo "------------------------"
-  pause_return
-}
+  need_root
+  ensure_curl
+  write_env_file
+  load_env_file
 
+  clear 2>/dev/null || true
+  echo "Check CX 后台管理配置"
+  echo "------------------------"
+  echo "后台地址: ${APP_URL:-$(access_url_for_port "$ADMIN_PORT")}"
+  echo "Supabase 兼容 API: ${PUBLIC_SUPABASE_URL:-$(api_public_url)}"
+  echo "GitHub OAuth App 回调地址: ${GITHUB_CALLBACK_URL:-${API_EXTERNAL_URL:-$(api_external_url)}/callback}"
+  echo "后台登录回跳地址: ${APP_URL:-$(access_url_for_port "$ADMIN_PORT")}/auth/callback"
+  echo "------------------------"
+  echo "GitHub OAuth App 新建步骤:"
+  echo "1. 打开 GitHub: https://github.com/settings/developers"
+  echo "2. 进入 OAuth Apps -> New OAuth App。"
+  echo "3. Application name 可填: Check CX Admin。"
+  echo "4. Homepage URL 填后台地址: ${APP_URL:-$(access_url_for_port "$ADMIN_PORT")}"
+  echo "5. Authorization callback URL 填: ${GITHUB_CALLBACK_URL:-${API_EXTERNAL_URL:-$(api_external_url)}/callback}"
+  echo "6. 创建后复制 Client ID，再点 Generate a new client secret 复制 Secret。"
+  echo "7. ADMIN_EMAILS 填允许进后台的 GitHub 邮箱，多个邮箱用英文逗号分隔。"
+  echo "------------------------"
+
+  read -r -p "现在写入 GitHub OAuth 配置吗？[y/N]: " answer
+  case "$answer" in
+    y|Y)
+      local client_id client_secret admin_emails
+      read -r -p "GitHub Client ID: " client_id
+      read -r -s -p "GitHub Client Secret（输入不回显）: " client_secret
+      echo ""
+      read -r -p "ADMIN_EMAILS（允许登录的 GitHub 邮箱，多个用英文逗号）: " admin_emails
+
+      if [ -z "$client_id" ] || [ -z "$client_secret" ] || [ -z "$admin_emails" ]; then
+        warn "Client ID、Client Secret、ADMIN_EMAILS 都不能为空，已取消写入。"
+        return 0
+      fi
+
+      set_env_value "GITHUB_ENABLED" "true"
+      set_env_value "GITHUB_CLIENT_ID" "$client_id"
+      set_env_value "GITHUB_CLIENT_SECRET" "$client_secret"
+      set_env_value "ADMIN_EMAILS" "$admin_emails"
+      load_env_file
+      success "后台 OAuth 配置已写入 $ENV_FILE"
+
+      if [ -f "$COMPOSE_FILE" ]; then
+        ensure_docker
+        ensure_compose
+        write_compose_file
+        write_nginx_file
+        init_local_database
+        info "正在重启后台、Auth 和 API 网关..."
+        (cd "$INSTALL_DIR" && "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" up -d check-cx-auth check-cx-gateway check-cx-admin)
+        success "后台相关服务已重启"
+      else
+        warn "还没有部署 Compose 文件，请执行: lf app check-cx install"
+      fi
+      ;;
+    *)
+      info "已跳过写入。需要时重新执行: lf app check-cx admin"
+      ;;
+  esac
+}
 check_cx_menu() {
   while true; do
     clear 2>/dev/null || true
@@ -966,7 +1220,7 @@ check_cx_menu() {
     echo "4. 查看全部日志"
     echo "5. 卸载，保留数据"
     echo "6. 彻底删除"
-    echo "7. 后台管理说明"
+    echo "7. 配置后台登录 / OAuth"
     echo "0. 返回上一级"
     echo "------------------------"
     read -r -p "请输入你的选择: " choice
