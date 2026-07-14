@@ -43,6 +43,35 @@ sudo bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
 
 这些都会由脚本自动生成并写入服务器本地配置。
 
+
+## 部署完成后会显示什么
+
+部署完成后，脚本会输出完整摘要：
+
+- 前台监控面板访问地址，自动显示公网 IPv4 / IPv6
+- 当前后台管理状态说明
+- 已部署容器列表
+- 安装目录、环境变量文件、Compose 文件、网关配置、数据库目录
+- 查看日志、更新、卸载、彻底删除命令
+
+示例：
+
+```text
+Check CX 部署信息
+前台监控面板:
+http://你的公网IPv4:3000
+http://[你的IPv6]:3000
+
+后台管理:
+当前脚本部署的是 check-cx 前台监控面板 + 本地数据库兼容层。
+本地轻量模式暂未内置后台管理入口。
+
+容器:
+check-cx                  前台监控面板
+check-cx-db               PostgreSQL 本地数据库
+check-cx-postgrest        Supabase REST 兼容 API
+check-cx-gateway          REST 网关
+```
 ## 部署目录
 
 默认部署在：

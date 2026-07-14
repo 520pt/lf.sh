@@ -104,6 +104,52 @@ print_access_urls() {
   echo "------------------------"
 }
 
+
+print_deployment_summary() {
+  echo ""
+  echo "============================================================"
+  echo "Check CX 部署信息"
+  echo "============================================================"
+  echo "前台监控面板:"
+  print_access_urls "$DEFAULT_PORT"
+  echo ""
+  echo "后台管理:"
+  echo "  当前脚本部署的是 check-cx 前台监控面板 + 本地数据库兼容层。"
+  echo "  官方后台是独立项目 check-cx-admin，且依赖 Supabase Auth。"
+  echo "  本地轻量模式暂未内置后台管理入口。"
+  echo ""
+  echo "容器:"
+  printf '  %-24s %s\n' "$APP_NAME" "前台监控面板"
+  printf '  %-24s %s\n' "$DB_CONTAINER" "PostgreSQL 本地数据库"
+  printf '  %-24s %s\n' "$POSTGREST_CONTAINER" "Supabase REST 兼容 API"
+  printf '  %-24s %s\n' "$GATEWAY_CONTAINER" "REST 网关"
+  echo ""
+  echo "目录与配置:"
+  echo "  安装目录: $INSTALL_DIR"
+  echo "  环境变量: $ENV_FILE"
+  echo "  Compose:  $COMPOSE_FILE"
+  echo "  网关配置: $NGINX_FILE"
+  echo "  数据目录: $INSTALL_DIR/postgres-data"
+  echo "  注意: .env 和 postgres-data 包含敏感配置/业务数据，请勿公开。"
+  echo ""
+  echo "常用命令:"
+  echo "  查看全部日志: bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) logs"
+  echo "  查看前台日志: docker logs -f $APP_NAME"
+  echo "  查看数据库日志: docker logs -f $DB_CONTAINER"
+  echo "  更新/重部署: bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) update"
+  echo "  停止并删除容器但保留数据: bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) uninstall"
+  echo "  彻底卸载并删除数据: bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) purge"
+  echo "============================================================"
+}
+
+compose_down_keep_data() {
+  if [ -f "$COMPOSE_FILE" ]; then
+    (cd "$INSTALL_DIR" && "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" down --remove-orphans)
+  else
+    docker rm -f "$APP_NAME" "$DB_CONTAINER" "$POSTGREST_CONTAINER" "$GATEWAY_CONTAINER" >/dev/null 2>&1 || true
+  fi
+}
+
 detect_country() {
   curl -fsS --max-time 2 https://ipinfo.io/country 2>/dev/null | tr -d '\r\n' || true
 }
@@ -526,29 +572,61 @@ deploy() {
     warn "本地 HTTP 检测返回 $code。服务可能仍在启动中，请稍后查看日志。"
   fi
 
-  print_access_urls "$DEFAULT_PORT"
-
-  info "常用命令："
-  printf '  查看日志：docker logs -f %s\n' "$APP_NAME"
-  printf '  修改配置：nano %s && cd %s && %s up -d\n' "$ENV_FILE" "$INSTALL_DIR" "${COMPOSE_CMD[*]}"
-  printf '  更新版本：bash <(curl -sL 你的脚本地址)\n'
+  print_deployment_summary
 }
 
 show_logs() {
-  docker logs -f "$APP_NAME"
+  ensure_docker
+  ensure_compose
+  if [ -f "$COMPOSE_FILE" ]; then
+    (cd "$INSTALL_DIR" && "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" logs -f)
+  else
+    docker logs -f "$APP_NAME"
+  fi
 }
 
 uninstall() {
   need_root
   ensure_docker
   ensure_compose
-  if [ -f "$COMPOSE_FILE" ]; then
-    (cd "$INSTALL_DIR" && "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" down)
-  else
-    docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
+  info "正在卸载 Check CX 容器，保留配置和数据库数据..."
+  compose_down_keep_data
+  success "容器已停止并删除"
+  warn "已保留安装目录: $INSTALL_DIR"
+  warn "已保留数据库数据: $INSTALL_DIR/postgres-data"
+  echo ""
+  echo "如需恢复，重新运行安装命令即可："
+  echo "  bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)"
+  echo ""
+  echo "如需彻底删除数据，请执行："
+  echo "  bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) purge"
+}
+
+purge() {
+  need_root
+  ensure_docker
+  ensure_compose
+
+  if [ "${CHECK_CX_ASSUME_YES:-}" != "1" ]; then
+    echo "这将彻底删除 Check CX 容器、配置和本地数据库数据："
+    echo "  $INSTALL_DIR"
+    echo ""
+    read -r -p "确认彻底删除？输入 DELETE 继续: " answer
+    if [ "$answer" != "DELETE" ]; then
+      info "已取消彻底卸载"
+      return 0
+    fi
   fi
-  warn "配置目录未删除：$INSTALL_DIR"
-  warn "如需彻底删除，请手动执行：rm -rf $INSTALL_DIR"
+
+  info "正在停止并删除容器..."
+  compose_down_keep_data
+
+  if [ -n "$INSTALL_DIR" ] && [ "$INSTALL_DIR" != "/" ] && [ -d "$INSTALL_DIR" ]; then
+    rm -rf "$INSTALL_DIR"
+    success "已删除安装目录和本地数据库数据: $INSTALL_DIR"
+  else
+    warn "安装目录不存在或路径异常，跳过删除: $INSTALL_DIR"
+  fi
 }
 
 main() {
@@ -562,13 +640,17 @@ main() {
     uninstall|remove)
       uninstall
       ;;
+    purge|destroy)
+      purge
+      ;;
     *)
       cat <<EOF
 用法：
   bash <(curl -sL 你的脚本地址)            # 安装或更新
   bash <(curl -sL 你的脚本地址) update     # 更新
   bash <(curl -sL 你的脚本地址) logs       # 查看日志
-  bash <(curl -sL 你的脚本地址) uninstall  # 停止并删除容器，保留配置目录
+  bash <(curl -sL 你的脚本地址) uninstall  # 停止并删除容器，保留配置和数据库
+  bash <(curl -sL 你的脚本地址) purge      # 彻底删除容器、配置和数据库
 
 可选环境变量：
   CHECK_CX_PORT=3000
