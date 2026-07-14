@@ -836,14 +836,77 @@ install_self_shortcut() {
   fi
 }
 
+download_self_to_shortcut() {
+  local tmp_file
+  mkdir -p /usr/local/bin
+  tmp_file="$(mktemp)"
+
+  if ! curl -fsSL "$SCRIPT_URL" -o "$tmp_file"; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+
+  if [ -f /usr/local/bin/lf ] && cmp -s "$tmp_file" /usr/local/bin/lf; then
+    rm -f "$tmp_file"
+    return 2
+  fi
+
+  if ! install -m 755 "$tmp_file" /usr/local/bin/lf; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+
+  rm -f "$tmp_file"
+  return 0
+}
+
 update_self() {
   need_root
   ensure_curl
-  mkdir -p /usr/local/bin
-  curl -fsSL "$SCRIPT_URL" -o /usr/local/bin/lf || fail "脚本更新失败：$SCRIPT_URL"
-  chmod +x /usr/local/bin/lf
-  success "脚本已更新：/usr/local/bin/lf"
+  if download_self_to_shortcut; then
+    success "脚本已更新：/usr/local/bin/lf"
+  else
+    local code=$?
+    if [ "$code" -eq 2 ]; then
+      success "脚本已是最新版本：/usr/local/bin/lf"
+    else
+      fail "脚本更新失败：$SCRIPT_URL"
+    fi
+  fi
   echo "以后可直接输入：lf"
+}
+
+auto_update_self() {
+  [ "${LF_DISABLE_AUTO_UPDATE:-}" = "1" ] && return 0
+  [ "${LF_AUTO_UPDATED:-}" = "1" ] && return 0
+  [ "${LF_SKIP_SHORTCUT:-}" = "1" ] && return 0
+  [ "${EUID:-$(id -u)}" -eq 0 ] || return 0
+  [ -f /usr/local/bin/lf ] || return 0
+
+  local self_path
+  self_path="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
+  [ "$self_path" = "/usr/local/bin/lf" ] || return 0
+
+  ensure_curl
+  local code
+  set +e
+  download_self_to_shortcut
+  code=$?
+  set -e
+
+  case "$code" in
+    0)
+      success "检测到脚本新版本，已自动更新并重新进入最新版。"
+      LF_AUTO_UPDATED=1 exec /usr/local/bin/lf "$@"
+      ;;
+    2)
+      return 0
+      ;;
+    *)
+      warn "自动更新失败，继续使用当前版本。可稍后手动执行：lf self-update"
+      return 0
+      ;;
+  esac
 }
 
 pause_return() {
@@ -1284,6 +1347,7 @@ show_help() {
   lf app check-cx logs                # 查看日志
   lf app check-cx uninstall           # 卸载容器，保留数据
   lf app check-cx purge               # 彻底删除容器、配置和数据库
+  lf self-update                      # 手动更新 lf 脚本
 
 兼容旧命令：
   lf install | lf update | lf logs | lf uninstall | lf purge
@@ -1294,6 +1358,8 @@ EOF
 }
 
 main() {
+  auto_update_self "$@"
+
   if [ $# -eq 0 ]; then
     main_menu_loop
     return 0
