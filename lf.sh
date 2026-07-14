@@ -20,7 +20,7 @@ SCHEMA_URL="${CHECK_CX_SCHEMA_URL:-https://raw.githubusercontent.com/BingZi-233/
 NGINX_FILE="$INSTALL_DIR/nginx.conf"
 INIT_SQL_FILE="$INSTALL_DIR/init-check-cx.sql"
 SCRIPT_URL="${LF_SCRIPT_URL:-https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh}"
-SCRIPT_VERSION="2026.07.14.3"
+SCRIPT_VERSION="2026.07.14.4"
 COMPOSE_CMD=()
 
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
@@ -507,7 +507,7 @@ services:
       GOTRUE_API_PORT: "9999"
       API_EXTERNAL_URL: \${API_EXTERNAL_URL}
       GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: postgres://postgres:\${POSTGRES_PASSWORD}@$DB_CONTAINER:5432/postgres?sslmode=disable
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:\${POSTGRES_PASSWORD}@$DB_CONTAINER:5432/postgres?sslmode=disable
       GOTRUE_SITE_URL: \${SITE_URL}
       GOTRUE_URI_ALLOW_LIST: \${ADDITIONAL_REDIRECT_URLS}
       GOTRUE_DISABLE_SIGNUP: "false"
@@ -644,10 +644,12 @@ build_init_sql() {
 
   cat > "$INIT_SQL_FILE" <<EOF
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION postgres;
 
 DO \$\$
 BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+    CREATE ROLE supabase_auth_admin NOINHERIT LOGIN PASSWORD '$POSTGRES_PASSWORD';
+  END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
     CREATE ROLE anon NOLOGIN;
   END IF;
@@ -664,9 +666,14 @@ END
 \$\$;
 
 ALTER ROLE authenticator WITH PASSWORD '$POSTGREST_AUTHENTICATOR_PASSWORD';
+ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_auth_admin SET search_path = auth;
 ALTER ROLE service_role BYPASSRLS;
+CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supabase_auth_admin;
+ALTER SCHEMA auth OWNER TO supabase_auth_admin;
 GRANT anon, authenticated, service_role TO authenticator;
-GRANT USAGE ON SCHEMA auth TO postgres, anon, authenticated, service_role;
+GRANT USAGE ON SCHEMA auth TO postgres, anon, authenticated, service_role, supabase_auth_admin;
+GRANT ALL PRIVILEGES ON SCHEMA auth TO supabase_auth_admin;
 EOF
 
   cat "$schema_tmp" >> "$INIT_SQL_FILE"
@@ -688,12 +695,58 @@ EOF
 }
 
 ensure_auth_schema() {
-  info "检查 Supabase Auth 数据库 schema..."
-  docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$DB_CONTAINER"     psql -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<'SQL'
-CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION postgres;
-GRANT USAGE ON SCHEMA auth TO postgres, anon, authenticated, service_role;
+  info "检查 Supabase Auth 数据库角色和 schema..."
+  docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$DB_CONTAINER"     psql -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<SQL
+DO \$\$
+DECLARE
+  item record;
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+    CREATE ROLE service_role NOLOGIN BYPASSRLS;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+    CREATE ROLE supabase_auth_admin NOINHERIT LOGIN PASSWORD '$POSTGRES_PASSWORD';
+  END IF;
+END
+\$\$;
+
+ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_auth_admin SET search_path = auth;
+ALTER ROLE service_role BYPASSRLS;
+CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supabase_auth_admin;
+ALTER SCHEMA auth OWNER TO supabase_auth_admin;
+GRANT USAGE ON SCHEMA auth TO postgres, anon, authenticated, service_role, supabase_auth_admin;
+GRANT ALL PRIVILEGES ON SCHEMA auth TO supabase_auth_admin;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA auth TO supabase_auth_admin;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA auth TO supabase_auth_admin;
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA auth TO supabase_auth_admin;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON TABLES TO supabase_auth_admin;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON SEQUENCES TO supabase_auth_admin;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON FUNCTIONS TO supabase_auth_admin;
+
+DO \$\$
+DECLARE
+  item record;
+BEGIN
+  FOR item IN SELECT format('%I.%I', schemaname, tablename) AS name FROM pg_tables WHERE schemaname = 'auth' LOOP
+    EXECUTE 'ALTER TABLE ' || item.name || ' OWNER TO supabase_auth_admin';
+  END LOOP;
+  FOR item IN SELECT format('%I.%I', sequence_schema, sequence_name) AS name FROM information_schema.sequences WHERE sequence_schema = 'auth' LOOP
+    EXECUTE 'ALTER SEQUENCE ' || item.name || ' OWNER TO supabase_auth_admin';
+  END LOOP;
+  FOR item IN SELECT oid::regprocedure AS name FROM pg_proc WHERE pronamespace = 'auth'::regnamespace LOOP
+    EXECUTE 'ALTER FUNCTION ' || item.name || ' OWNER TO supabase_auth_admin';
+  END LOOP;
+END
+\$\$;
 SQL
-  success "Auth schema 已就绪"
+  success "Auth 数据库角色和 schema 已就绪"
 }
 
 init_local_database() {
