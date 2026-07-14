@@ -1,41 +1,134 @@
 # lf.sh
 
-Check CX 一键 Docker 部署脚本。
+LF 脚本工具箱，参考 `kejilion.sh` 的菜单式交互。Check CX 作为“应用市场”里的应用管理。
 
-## 一键安装命令
+## 一键启动
 
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
 ```
 
-如果需要 sudo：
+首次以 root 运行时会自动安装快捷命令：
 
 ```bash
-sudo bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+lf
 ```
 
-## 现在不需要手动创建 Supabase
+之后直接输入 `lf` 打开主菜单。
 
-脚本默认使用本地数据库模式，会在同一台服务器的 Docker Compose 里自动部署：
+## 主菜单
 
-- `check-cx` 主程序
+```text
+LF 脚本工具箱
+命令行输入 lf 可快速启动脚本
+------------------------
+1.   系统信息查询
+2.   系统更新
+3.   系统清理
+4.   基础工具
+5.   BBR管理
+6.   Docker管理
+7.   WARP管理
+8.   测试脚本合集
+9.   甲骨文云脚本合集
+10.  LDNMP建站
+11.  应用市场
+------------------------
+00.  脚本更新
+0.   退出脚本
+```
+
+## 应用市场模式
+
+打开应用市场：
+
+```bash
+lf app
+```
+
+进入 Check CX 管理页：
+
+```bash
+lf app check-cx
+```
+
+别名：
+
+```bash
+lf app cx
+lf app checkcx
+```
+
+## Check CX 直达命令
+
+安装或更新：
+
+```bash
+lf app check-cx install
+```
+
+查看状态：
+
+```bash
+lf app check-cx status
+```
+
+查看访问地址：
+
+```bash
+lf app check-cx url
+```
+
+查看日志：
+
+```bash
+lf app check-cx logs
+```
+
+卸载容器，保留配置和数据库：
+
+```bash
+lf app check-cx uninstall
+```
+
+彻底删除容器、配置和本地数据库：
+
+```bash
+lf app check-cx purge
+```
+
+`purge` 会要求输入 `DELETE` 二次确认。
+
+## 兼容旧命令
+
+这些命令仍然可用，默认映射到 Check CX：
+
+```bash
+lf install
+lf update
+lf status
+lf url
+lf logs
+lf uninstall
+lf purge
+```
+
+如果还没安装快捷命令，也可以用完整形式：
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) app check-cx install
+```
+
+## Check CX 本地数据库模式
+
+`lf app check-cx install` 会在同一台服务器的 Docker Compose 里自动部署：
+
+- `check-cx` 前台监控面板
 - PostgreSQL 本地数据库
-- PostgREST，本地 Supabase REST API 兼容层
+- PostgREST，Supabase REST API 兼容层
 - Nginx REST 网关，把 `/rest/v1/*` 转发给 PostgREST
 
-首次运行时脚本会自动：
-
-1. 检测并安装 Docker / Docker Compose。
-2. 生成本地数据库密码、JWT Secret、anon key、service role key。
-3. 写入 `/opt/check-cx/.env`。
-4. 写入 `/opt/check-cx/docker-compose.yml`。
-5. 下载 `check-cx` 的 `supabase/schema.sql`。
-6. 启动本地 PostgreSQL。
-7. 自动创建 Supabase 兼容角色：`anon`、`authenticated`、`service_role`、`authenticator`。
-8. 自动执行数据库表结构初始化。
-9. 启动 `check-cx`。
-
-所以用户不需要再去 Supabase 官网创建项目，也不需要手动输入：
+不需要手动创建 Supabase 项目，也不需要手动输入：
 
 - `SUPABASE_URL`
 - `SUPABASE_PUBLISHABLE_OR_ANON_KEY`
@@ -43,35 +136,6 @@ sudo bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
 
 这些都会由脚本自动生成并写入服务器本地配置。
 
-
-## 部署完成后会显示什么
-
-部署完成后，脚本会输出完整摘要：
-
-- 前台监控面板访问地址，自动显示公网 IPv4 / IPv6
-- 当前后台管理状态说明
-- 已部署容器列表
-- 安装目录、环境变量文件、Compose 文件、网关配置、数据库目录
-- 查看日志、更新、卸载、彻底删除命令
-
-示例：
-
-```text
-Check CX 部署信息
-前台监控面板:
-http://你的公网IPv4:3000
-http://[你的IPv6]:3000
-
-后台管理:
-当前脚本部署的是 check-cx 前台监控面板 + 本地数据库兼容层。
-本地轻量模式暂未内置后台管理入口。
-
-容器:
-check-cx                  前台监控面板
-check-cx-db               PostgreSQL 本地数据库
-check-cx-postgrest        Supabase REST 兼容 API
-check-cx-gateway          REST 网关
-```
 ## 部署目录
 
 默认部署在：
@@ -89,32 +153,21 @@ check-cx-gateway          REST 网关
 /opt/check-cx/postgres-data/       # PostgreSQL 数据目录
 ```
 
-`.env` 里包含敏感密钥，不要公开分享。
+`.env` 和 `postgres-data` 包含敏感配置/业务数据，不要公开分享。
 
-## 常用命令
-
-安装或更新：
+## 系统功能直达命令
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
-```
-
-查看日志：
-
-```bash
-bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) logs
-```
-
-停止并删除容器，保留配置和数据库文件：
-
-```bash
-bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) uninstall
-```
-
-彻底删除数据需要手动执行：
-
-```bash
-rm -rf /opt/check-cx
+lf info
+lf system-update
+lf clean
+lf tools
+lf bbr
+lf docker
+lf warp
+lf test
+lf oracle
+lf ldnmp
 ```
 
 ## 可选环境变量
@@ -122,35 +175,24 @@ rm -rf /opt/check-cx
 修改 Web 端口：
 
 ```bash
-CHECK_CX_PORT=8080 bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+CHECK_CX_PORT=8080 lf app check-cx install
 ```
 
 修改安装目录：
 
 ```bash
-CHECK_CX_INSTALL_DIR=/opt/my-check-cx bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+CHECK_CX_INSTALL_DIR=/opt/my-check-cx lf app check-cx install
 ```
 
 指定数据库 schema 地址：
 
 ```bash
 CHECK_CX_SCHEMA_URL=https://raw.githubusercontent.com/BingZi-233/check-cx/master/supabase/schema.sql \
-bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+lf app check-cx install
 ```
 
-## 已有旧版远程 Supabase 配置怎么办
-
-如果服务器上已经存在旧版 `/opt/check-cx/.env`，脚本会保留它，不会覆盖。
-
-如果你想切换为本地数据库模式，可以先备份旧配置：
+跳过快捷命令安装：
 
 ```bash
-cp /opt/check-cx/.env /opt/check-cx/.env.bak
-```
-
-然后删除旧配置并重新运行脚本：
-
-```bash
-rm /opt/check-cx/.env
-bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+LF_SKIP_SHORTCUT=1 bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
 ```

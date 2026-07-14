@@ -13,6 +13,7 @@ GATEWAY_CONTAINER="check-cx-gateway"
 SCHEMA_URL="${CHECK_CX_SCHEMA_URL:-https://raw.githubusercontent.com/BingZi-233/check-cx/master/supabase/schema.sql}"
 NGINX_FILE="$INSTALL_DIR/nginx.conf"
 INIT_SQL_FILE="$INSTALL_DIR/init-check-cx.sql"
+SCRIPT_URL="${LF_SCRIPT_URL:-https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh}"
 COMPOSE_CMD=()
 
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
@@ -629,38 +630,484 @@ purge() {
   fi
 }
 
+
+install_self_shortcut() {
+  [ "${LF_SKIP_SHORTCUT:-}" = "1" ] && return 0
+
+  if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+    return 0
+  fi
+
+  if [ ! -w /usr/local/bin ] && ! mkdir -p /usr/local/bin 2>/dev/null; then
+    return 0
+  fi
+
+  if [ ! -f /usr/local/bin/lf ] || ! cmp -s "$0" /usr/local/bin/lf 2>/dev/null; then
+    if curl -fsSL "$SCRIPT_URL" -o /usr/local/bin/lf 2>/dev/null; then
+      chmod +x /usr/local/bin/lf
+      success "快捷命令已安装/更新：lf"
+    fi
+  fi
+}
+
+update_self() {
+  need_root
+  ensure_curl
+  mkdir -p /usr/local/bin
+  curl -fsSL "$SCRIPT_URL" -o /usr/local/bin/lf || fail "脚本更新失败：$SCRIPT_URL"
+  chmod +x /usr/local/bin/lf
+  success "脚本已更新：/usr/local/bin/lf"
+  echo "以后可直接输入：lf"
+}
+
+pause_return() {
+  echo ""
+  read -r -p "按回车返回..." _ || true
+}
+
+show_banner() {
+  clear 2>/dev/null || true
+  cat <<'EOF'
+╦  ╔═╗
+║  ╠╣
+╩═╝╚
+EOF
+  echo "LF 脚本工具箱"
+  echo "命令行输入 lf 可快速启动脚本"
+  echo "------------------------"
+}
+
+show_main_menu() {
+  show_banner
+  echo "1.   系统信息查询"
+  echo "2.   系统更新"
+  echo "3.   系统清理"
+  echo "4.   基础工具"
+  echo "5.   BBR管理"
+  echo "6.   Docker管理"
+  echo "7.   WARP管理"
+  echo "8.   测试脚本合集"
+  echo "9.   甲骨文云脚本合集"
+  echo "10.  LDNMP建站"
+  echo "11.  应用市场"
+  echo "------------------------"
+  echo "00.  脚本更新"
+  echo "------------------------"
+  echo "0.   退出脚本"
+  echo "------------------------"
+}
+
+main_menu_loop() {
+  install_self_shortcut
+  while true; do
+    show_main_menu
+    read -r -p "请输入你的选择: " choice
+    case "$choice" in
+      1) linux_info; pause_return ;;
+      2) linux_update; pause_return ;;
+      3) linux_clean; pause_return ;;
+      4) linux_tools ;;
+      5) linux_bbr ;;
+      6) linux_docker ;;
+      7) linux_warp ;;
+      8) linux_test ;;
+      9) linux_oracle ;;
+      10) linux_ldnmp ;;
+      11) app_market ;;
+      00) update_self; pause_return ;;
+      0) exit 0 ;;
+      *) warn "无效选择"; sleep 1 ;;
+    esac
+  done
+}
+
+linux_info() {
+  echo "系统信息查询"
+  echo "------------------------"
+  echo "主机名:       $(hostname 2>/dev/null || echo unknown)"
+  echo "系统版本:     $(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown}" || echo unknown)"
+  echo "Linux版本:    $(uname -r)"
+  echo "CPU架构:      $(uname -m)"
+  echo "CPU核心数:    $(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo unknown)"
+  echo "内存使用:     $(free -h 2>/dev/null | awk '/Mem:/ {print $3"/"$2}' || echo unknown)"
+  echo "硬盘使用:     $(df -h / 2>/dev/null | awk 'NR==2 {print $3"/"$2" ("$5")"}' || echo unknown)"
+  echo "运行时间:     $(uptime -p 2>/dev/null || cat /proc/uptime 2>/dev/null | awk '{printf "%d 秒", $1}' || echo unknown)"
+  echo "IPv4地址:     $(get_public_ipv4 | tr -d '\r\n ' || true)"
+  echo "IPv6地址:     $(get_public_ipv6 | tr -d '\r\n ' || true)"
+}
+
+linux_update() {
+  need_root
+  info "正在系统更新..."
+  if has_cmd apt-get; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -y
+    DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y
+  elif has_cmd dnf; then
+    dnf -y update
+  elif has_cmd yum; then
+    yum -y update
+  elif has_cmd apk; then
+    apk update && apk upgrade
+  elif has_cmd pacman; then
+    pacman -Syu --noconfirm
+  else
+    fail "未知的包管理器"
+  fi
+  success "系统更新完成"
+}
+
+linux_clean() {
+  need_root
+  info "正在系统清理..."
+  if has_cmd apt-get; then
+    apt-get autoremove -y
+    apt-get autoclean -y
+    apt-get clean -y
+  elif has_cmd dnf; then
+    dnf autoremove -y || true
+    dnf clean all || true
+  elif has_cmd yum; then
+    yum autoremove -y || true
+    yum clean all || true
+  elif has_cmd apk; then
+    rm -rf /var/cache/apk/*
+  elif has_cmd pacman; then
+    pacman -Sc --noconfirm || true
+  fi
+  journalctl --vacuum-time=7d >/dev/null 2>&1 || true
+  docker system prune -f >/dev/null 2>&1 || true
+  success "系统清理完成"
+}
+
+linux_tools() {
+  while true; do
+    clear 2>/dev/null || true
+    echo "基础工具"
+    echo "------------------------"
+    echo "1. 安装常用工具 curl wget sudo socat htop unzip tar tmux vim nano git jq"
+    echo "2. 安装增强工具 btop ncdu fzf ranger"
+    echo "0. 返回上一级"
+    echo "------------------------"
+    read -r -p "请输入你的选择: " choice
+    case "$choice" in
+      1) need_root; install_pkg curl wget sudo socat htop unzip tar tmux vim nano git jq; pause_return ;;
+      2) need_root; install_pkg btop ncdu fzf ranger; pause_return ;;
+      0) break ;;
+      *) warn "无效选择"; sleep 1 ;;
+    esac
+  done
+}
+
+linux_bbr() {
+  while true; do
+    clear 2>/dev/null || true
+    echo "BBR管理"
+    echo "------------------------"
+    echo "当前拥塞算法: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)"
+    echo "当前队列算法: $(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)"
+    echo "------------------------"
+    echo "1. 开启 BBR + fq"
+    echo "2. 查看状态"
+    echo "0. 返回上一级"
+    read -r -p "请输入你的选择: " choice
+    case "$choice" in
+      1)
+        need_root
+        cat >/etc/sysctl.d/99-lf-bbr.conf <<'EOF'
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+        sysctl --system >/dev/null || true
+        success "已尝试开启 BBR"
+        pause_return
+        ;;
+      2) sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc 2>/dev/null || true; pause_return ;;
+      0) break ;;
+      *) warn "无效选择"; sleep 1 ;;
+    esac
+  done
+}
+
+linux_docker() {
+  while true; do
+    clear 2>/dev/null || true
+    echo "Docker管理"
+    echo "------------------------"
+    echo "1. 安装/更新 Docker 环境"
+    echo "2. 查看 Docker 全局状态"
+    echo "3. 查看容器列表"
+    echo "4. 查看镜像列表"
+    echo "5. 清理无用镜像/缓存"
+    echo "0. 返回上一级"
+    read -r -p "请输入你的选择: " choice
+    case "$choice" in
+      1) need_root; ensure_curl; install_docker; ensure_compose; pause_return ;;
+      2) docker info; pause_return ;;
+      3) docker ps -a --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}'; pause_return ;;
+      4) docker image ls; pause_return ;;
+      5) docker system prune -af; pause_return ;;
+      0) break ;;
+      *) warn "无效选择"; sleep 1 ;;
+    esac
+  done
+}
+
+linux_warp() {
+  clear 2>/dev/null || true
+  echo "WARP管理"
+  echo "------------------------"
+  echo "将调用 fscarmen WARP 官方菜单脚本。"
+  read -r -p "是否继续？[y/N]: " answer
+  case "$answer" in
+    y|Y) install_pkg wget || true; wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh ;;
+    *) return 0 ;;
+  esac
+}
+
+linux_test() {
+  while true; do
+    clear 2>/dev/null || true
+    echo "测试脚本合集"
+    echo "------------------------"
+    echo "1. bench.sh 基准测试"
+    echo "2. IP质量/解锁检测入口提示"
+    echo "0. 返回上一级"
+    read -r -p "请输入你的选择: " choice
+    case "$choice" in
+      1) curl -Lso- bench.sh | bash; pause_return ;;
+      2) echo "可按需运行第三方检测脚本；请确认来源可信后执行。"; pause_return ;;
+      0) break ;;
+      *) warn "无效选择"; sleep 1 ;;
+    esac
+  done
+}
+
+linux_oracle() {
+  clear 2>/dev/null || true
+  echo "甲骨文云脚本合集"
+  echo "------------------------"
+  echo "当前版本仅提供兼容入口。建议按需使用原 kejilion 菜单里的甲骨文云功能。"
+  echo "运行：bash <(curl -sL kejilion.sh)，选择 9。"
+  pause_return
+}
+
+linux_ldnmp() {
+  clear 2>/dev/null || true
+  echo "LDNMP建站"
+  echo "------------------------"
+  echo "当前版本仅提供兼容入口。LDNMP 功能体量较大，建议使用原 kejilion 菜单。"
+  echo "运行：bash <(curl -sL kejilion.sh)，选择 10。"
+  pause_return
+}
+
+app_market() {
+  while true; do
+    clear 2>/dev/null || true
+    echo "应用市场"
+    echo "------------------------"
+    echo "1. Check CX - AI 模型 API 健康监控面板"
+    echo "------------------------"
+    echo "0. 返回上一级"
+    echo "------------------------"
+    read -r -p "请输入你的选择: " choice
+    case "$choice" in
+      1) check_cx_menu ;;
+      0) break ;;
+      *) warn "无效选择"; sleep 1 ;;
+    esac
+  done
+}
+
+check_cx_status() {
+  echo "Check CX 状态"
+  echo "------------------------"
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$APP_NAME"; then
+    docker ps -a --filter "name=^/${APP_NAME}$" --format '前台容器: {{.Status}}'
+  else
+    echo "前台容器: 未安装"
+  fi
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$DB_CONTAINER"; then
+    docker ps -a --filter "name=^/${DB_CONTAINER}$" --format '数据库容器: {{.Status}}'
+  else
+    echo "数据库容器: 未安装"
+  fi
+  echo "安装目录: $INSTALL_DIR"
+  echo "配置文件: $ENV_FILE"
+  print_access_urls "$DEFAULT_PORT"
+}
+
+check_cx_urls() {
+  echo "Check CX 访问地址"
+  print_access_urls "$DEFAULT_PORT"
+}
+
+check_cx_admin_guide() {
+  clear 2>/dev/null || true
+  echo "Check CX 后台管理说明"
+  echo "------------------------"
+  echo "官方后台项目: BingZi-233/check-cx-admin"
+  echo "官方后台依赖 Supabase Auth / GitHub OAuth。"
+  echo "当前 lf 本地轻量模式暂未内置 Auth 服务，所以还没有可直接登录的后台。"
+  echo "后续可继续加入: check-cx-admin + GoTrue(Auth) + GitHub OAuth 配置。"
+  echo "------------------------"
+  pause_return
+}
+
+check_cx_menu() {
+  while true; do
+    clear 2>/dev/null || true
+    echo "Check CX 管理"
+    echo "------------------------"
+    check_cx_status
+    echo "------------------------"
+    echo "1. 安装 / 更新"
+    echo "2. 查看状态"
+    echo "3. 查看访问地址"
+    echo "4. 查看全部日志"
+    echo "5. 卸载，保留数据"
+    echo "6. 彻底删除"
+    echo "7. 后台管理说明"
+    echo "0. 返回上一级"
+    echo "------------------------"
+    read -r -p "请输入你的选择: " choice
+    case "$choice" in
+      1) deploy; pause_return ;;
+      2) check_cx_status; pause_return ;;
+      3) check_cx_urls; pause_return ;;
+      4) show_logs ;;
+      5) uninstall; pause_return ;;
+      6) purge; pause_return ;;
+      7) check_cx_admin_guide ;;
+      0) break ;;
+      *) warn "无效选择"; sleep 1 ;;
+    esac
+  done
+}
+
+check_cx_dispatch() {
+  local action="${1:-menu}"
+  case "$action" in
+    menu|manage|管理) check_cx_menu ;;
+    install|deploy|update|安装|更新) deploy ;;
+    status|状态) check_cx_status ;;
+    url|urls|address|地址) check_cx_urls ;;
+    logs|log|日志) show_logs ;;
+    uninstall|remove|卸载) uninstall ;;
+    purge|destroy|删除) purge ;;
+    admin|后台) check_cx_admin_guide ;;
+    *)
+      echo "Check CX 用法:"
+      echo "  lf app check-cx"
+      echo "  lf app check-cx install|update|status|url|logs|uninstall|purge|admin"
+      return 1
+      ;;
+  esac
+}
+
+app_dispatch() {
+  local app="${1:-market}"
+  shift || true
+  case "$app" in
+    market|list|应用市场|"") app_market ;;
+    check-cx|checkcx|cx) check_cx_dispatch "$@" ;;
+    *)
+      warn "未知应用: $app"
+      echo "可用应用: check-cx"
+      return 1
+      ;;
+  esac
+}
+
+show_help() {
+  cat <<EOF
+用法：
+  lf                                  # 打开主菜单
+  lf app                              # 打开应用市场
+  lf app check-cx                     # 打开 Check CX 管理页
+  lf app check-cx install             # 安装/更新 Check CX
+  lf app check-cx status              # 查看状态
+  lf app check-cx url                 # 查看访问地址
+  lf app check-cx logs                # 查看日志
+  lf app check-cx uninstall           # 卸载容器，保留数据
+  lf app check-cx purge               # 彻底删除容器、配置和数据库
+
+兼容旧命令：
+  lf install | lf update | lf logs | lf uninstall | lf purge
+
+系统功能：
+  lf info | lf system-update | lf clean | lf tools | lf bbr | lf docker | lf warp | lf test | lf oracle | lf ldnmp
+EOF
+}
+
 main() {
-  case "${1:-deploy}" in
-    deploy|install|update)
-      deploy
+  if [ $# -eq 0 ]; then
+    main_menu_loop
+    return 0
+  fi
+
+  local cmd="$1"
+  shift || true
+  case "$cmd" in
+    app|应用市场)
+      app_dispatch "$@"
       ;;
-    logs)
-      show_logs
+    deploy|install|update|安装|更新)
+      check_cx_dispatch install
       ;;
-    uninstall|remove)
-      uninstall
+    status|状态)
+      check_cx_dispatch status
       ;;
-    purge|destroy)
-      purge
+    url|urls|address|地址)
+      check_cx_dispatch url
+      ;;
+    logs|log|日志)
+      check_cx_dispatch logs
+      ;;
+    uninstall|remove|卸载)
+      check_cx_dispatch uninstall
+      ;;
+    purge|destroy|删除)
+      check_cx_dispatch purge
+      ;;
+    info|system-info|系统信息)
+      linux_info
+      ;;
+    system-update|sys-update|系统更新)
+      linux_update
+      ;;
+    clean|系统清理)
+      linux_clean
+      ;;
+    tools|基础工具)
+      linux_tools
+      ;;
+    bbr|BBR)
+      linux_bbr
+      ;;
+    docker|Docker)
+      linux_docker
+      ;;
+    warp|WARP)
+      linux_warp
+      ;;
+    test|bench|测试)
+      linux_test
+      ;;
+    oracle|甲骨文)
+      linux_oracle
+      ;;
+    ldnmp|web|建站)
+      linux_ldnmp
+      ;;
+    00|self-update|script-update|脚本更新)
+      update_self
+      ;;
+    help|-h|--help)
+      show_help
       ;;
     *)
-      cat <<EOF
-用法：
-  bash <(curl -sL 你的脚本地址)            # 安装或更新
-  bash <(curl -sL 你的脚本地址) update     # 更新
-  bash <(curl -sL 你的脚本地址) logs       # 查看日志
-  bash <(curl -sL 你的脚本地址) uninstall  # 停止并删除容器，保留配置和数据库
-  bash <(curl -sL 你的脚本地址) purge      # 彻底删除容器、配置和数据库
-
-可选环境变量：
-  CHECK_CX_PORT=3000
-  CHECK_CX_INSTALL_DIR=/opt/check-cx
-  CHECK_CX_SCHEMA_URL=https://raw.githubusercontent.com/BingZi-233/check-cx/master/supabase/schema.sql
-
-说明：
-  默认使用本地数据库模式，会自动部署 PostgreSQL + PostgREST + REST 网关。
-  不需要手动创建 Supabase 项目，也不需要输入 Supabase URL 或 Key。
-EOF
+      show_help
+      return 1
       ;;
   esac
 }
