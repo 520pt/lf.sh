@@ -20,7 +20,7 @@ SCHEMA_URL="${CHECK_CX_SCHEMA_URL:-https://raw.githubusercontent.com/BingZi-233/
 NGINX_FILE="$INSTALL_DIR/nginx.conf"
 INIT_SQL_FILE="$INSTALL_DIR/init-check-cx.sql"
 SCRIPT_URL="${LF_SCRIPT_URL:-https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh}"
-SCRIPT_VERSION="2026.07.14.7"
+SCRIPT_VERSION="2026.07.14.8"
 COMPOSE_CMD=()
 
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
@@ -738,6 +738,16 @@ BEGIN
          AND column_name = 'client_id'
      ) THEN
     DROP TABLE auth.oauth_clients CASCADE;
+  END IF;
+
+  IF to_regclass('auth.oauth_authorizations') IS NOT NULL
+     AND EXISTS (
+       SELECT 1
+       FROM pg_constraint
+       WHERE conrelid = 'auth.oauth_authorizations'::regclass
+         AND conname = 'oauth_authorizations_nonce_length'
+     ) THEN
+    ALTER TABLE auth.oauth_authorizations DROP CONSTRAINT oauth_authorizations_nonce_length;
   END IF;
 END
 \$\$;
