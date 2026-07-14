@@ -2,26 +2,7 @@
 
 Check CX 一键 Docker 部署脚本。
 
-## 首次安装前先准备 Supabase
-
-`check-cx` 需要 Supabase 保存监控配置和历史数据。首次运行脚本时，如果还没有 `/opt/check-cx/.env`，脚本会先显示准备教程，并询问你是否已经完成 Supabase 初始化。
-
-需要准备：
-
-1. 打开 Supabase 控制台：
-   <https://supabase.com/dashboard>
-2. 新建一个 Project。
-3. 进入项目后打开：`Project Settings -> API`。
-4. 准备 3 个值：
-   - `SUPABASE_URL`：Project URL
-   - `SUPABASE_PUBLISHABLE_OR_ANON_KEY`：anon public / publishable key
-   - `SUPABASE_SERVICE_ROLE_KEY`：service_role key
-5. 打开 Supabase 的 SQL Editor，执行 check-cx 的数据库结构：
-   <https://raw.githubusercontent.com/BingZi-233/check-cx/master/supabase/schema.sql>
-
-完成后再运行安装脚本。
-
-## 使用
+## 一键安装命令
 
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
@@ -33,23 +14,114 @@ bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
 sudo bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
 ```
 
-## 常用命令
+## 现在不需要手动创建 Supabase
 
-```bash
-bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) update
-bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) logs
-bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) uninstall
+脚本默认使用本地数据库模式，会在同一台服务器的 Docker Compose 里自动部署：
+
+- `check-cx` 主程序
+- PostgreSQL 本地数据库
+- PostgREST，本地 Supabase REST API 兼容层
+- Nginx REST 网关，把 `/rest/v1/*` 转发给 PostgREST
+
+首次运行时脚本会自动：
+
+1. 检测并安装 Docker / Docker Compose。
+2. 生成本地数据库密码、JWT Secret、anon key、service role key。
+3. 写入 `/opt/check-cx/.env`。
+4. 写入 `/opt/check-cx/docker-compose.yml`。
+5. 下载 `check-cx` 的 `supabase/schema.sql`。
+6. 启动本地 PostgreSQL。
+7. 自动创建 Supabase 兼容角色：`anon`、`authenticated`、`service_role`、`authenticator`。
+8. 自动执行数据库表结构初始化。
+9. 启动 `check-cx`。
+
+所以用户不需要再去 Supabase 官网创建项目，也不需要手动输入：
+
+- `SUPABASE_URL`
+- `SUPABASE_PUBLISHABLE_OR_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+这些都会由脚本自动生成并写入服务器本地配置。
+
+## 部署目录
+
+默认部署在：
+
+```text
+/opt/check-cx
 ```
 
-## 非交互安装
+主要文件：
 
-如果你已经准备好 Supabase，也可以通过环境变量传入：
+```text
+/opt/check-cx/.env                 # 本地数据库和 check-cx 环境变量，包含密钥
+/opt/check-cx/docker-compose.yml   # Docker Compose 配置
+/opt/check-cx/nginx.conf           # 本地 REST 网关配置
+/opt/check-cx/postgres-data/       # PostgreSQL 数据目录
+```
+
+`.env` 里包含敏感密钥，不要公开分享。
+
+## 常用命令
+
+安装或更新：
 
 ```bash
-SUPABASE_URL="https://你的项目.supabase.co" \
-SUPABASE_PUBLISHABLE_OR_ANON_KEY="你的 anon/public key" \
-SUPABASE_SERVICE_ROLE_KEY="你的 service_role key" \
 bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` 是敏感密钥，不要公开分享。
+查看日志：
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) logs
+```
+
+停止并删除容器，保留配置和数据库文件：
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh) uninstall
+```
+
+彻底删除数据需要手动执行：
+
+```bash
+rm -rf /opt/check-cx
+```
+
+## 可选环境变量
+
+修改 Web 端口：
+
+```bash
+CHECK_CX_PORT=8080 bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+```
+
+修改安装目录：
+
+```bash
+CHECK_CX_INSTALL_DIR=/opt/my-check-cx bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+```
+
+指定数据库 schema 地址：
+
+```bash
+CHECK_CX_SCHEMA_URL=https://raw.githubusercontent.com/BingZi-233/check-cx/master/supabase/schema.sql \
+bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+```
+
+## 已有旧版远程 Supabase 配置怎么办
+
+如果服务器上已经存在旧版 `/opt/check-cx/.env`，脚本会保留它，不会覆盖。
+
+如果你想切换为本地数据库模式，可以先备份旧配置：
+
+```bash
+cp /opt/check-cx/.env /opt/check-cx/.env.bak
+```
+
+然后删除旧配置并重新运行脚本：
+
+```bash
+rm /opt/check-cx/.env
+bash <(curl -sL https://raw.githubusercontent.com/520pt/lf.sh/main/lf.sh)
+```
